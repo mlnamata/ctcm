@@ -1,10 +1,4 @@
-# macOS
-.DS_Store
-
-# Python
-.venv/
+.env
 __pycache__/
-*.py[cod]
-
-# Local secrets/config
-env.env
+.DS_Store
+.venv/
