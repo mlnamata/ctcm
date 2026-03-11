@@ -257,13 +257,13 @@ def remove_background(image_bytes: bytes) -> Image.Image:
     #   blue_ratio > 0.45 = B tvoří aspoň 45% celé světlosti
     #   B > 60            = není to tma (tmavé barvy nezajímají)
     #   R < 160, G < 160  = R a G nejsou vysoké (= není to bílá, žlutá, cyan)
-    blue_rgb = (blue_ratio > 0.45) & (B > 60) & (R < 160) & (G < 160)
-
-    # HSV detekce zachytí i světlejší modré kde G >= 160 (RGB je propustí)
-    blue_hsv = _is_blue_hsv(R, G, B)
-
-    # Pixel je modrý pokud ho zachytí KTERÁKOLIV metoda
-    blue_mask = blue_rgb | blue_hsv
+    # POZOR: v remove_background používáme POUZE RGB detekci (konservativní).
+    # HSV detekce je příliš agresivní a zachytí okraje bílého talíře
+    # (mají modrý odraz od chroma-key pozadí) → to vytvoří díru v masce
+    # a flood-fill proleze dovnitř talíře a smaže kus jídla.
+    # HSV se používá až v pozdějších krocích (_detect_blue_in_plate,
+    # verify_final_composition) kde to nevadí.
+    blue_mask = (blue_ratio > 0.45) & (B > 60) & (R < 160) & (G < 160)
 
     # ── Flood-fill od hranic ────────────────────────────────────────────────
     # Vytvoříme prázdnou masku hraničních pixelů
@@ -288,18 +288,9 @@ def remove_background(image_bytes: bytes) -> Image.Image:
     # final_bg = maska všeho pozadí (bez vnitřních modrých artefaktů)
     final_bg = np.isin(labeled, list(bg_labels))
 
-    # Velké modré skvrny nepřipojené k okraji jsou taky pozadí
-    # (stane se když okraj talíře přeruší spojení modré k hranici obrázku)
-    remaining_blue = blue_mask & ~final_bg
-    remaining_labeled, remaining_n = label(remaining_blue)
-    for i in range(1, remaining_n + 1):
-        region = remaining_labeled == i
-        if region.sum() > 100:
-            final_bg |= region
-
-    # Rozšíř masku pozadí o 3 px -> zachytí subpixelové okraje talíře
-    # (zvýšeno z 2 na 3 pro lepší čištění modrého okraje)
-    dilated = binary_dilation(final_bg, disk(3))
+    # Rozšíř masku pozadí o 2 px -> zachytí subpixelové okraje talíře
+    # (POZOR: 3 px je příliš – ukousne okraj talíře a jídla)
+    dilated = binary_dilation(final_bg, disk(2))
 
     # ── Alfa kanál ──────────────────────────────────────────────────────────
     # pozadí (dilated=True)  -> alpha=0   (průhledné)
@@ -368,10 +359,10 @@ def _is_blue_hsv(R: np.ndarray, G: np.ndarray, B: np.ndarray) -> np.ndarray:
     hue[r_max] = (60.0 * ((G[r_max] - B[r_max]) / (delta[r_max] + 1e-6))) % 360.0
 
     # Pixel je modrý pokud:
-    #   - odstín 190°-270° (modrá + modrofialová)
-    #   - sytost > 0.15 (není šedá)
+    #   - odstín 200°-260° (modrá, zúženo z 190-270 aby nechytala cyan/fialovou)
+    #   - sytost > 0.25 (není šedá; zvýšeno z 0.15 aby nechytala odrazy na talíři)
     #   - jas > 50 (není příliš tmavý)
-    return (hue >= 190) & (hue <= 270) & (sat > 0.15) & (max_c > 50)
+    return (hue >= 200) & (hue <= 260) & (sat > 0.25) & (max_c > 50)
 
 
 def _detect_blue_in_plate(data: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
