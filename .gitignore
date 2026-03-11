@@ -5,6 +5,10 @@ __pycache__/
 .idea/
 vygenerovano/
 
+# SQLite databáze s cache vygenerovaných obrázků
+# (data/ se vytváří automaticky při startu aplikace)
+data/
+
 .generated_files/
 build/
 dist/

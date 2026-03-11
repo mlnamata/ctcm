@@ -1,15 +1,42 @@
+# ── docker-compose.yml ────────────────────────────────────────────────────────
+# Konfigurační soubor pro Docker Compose - řídí spuštění kontejnerů
+#
+# Jak použít:
+#   docker compose up -d          = spusť na pozadí
+#   docker compose logs -f        = sleduj logy
+#   docker compose down           = zastav
+#   docker compose build          = přebuildi obraz po změně kódu
+# ─────────────────────────────────────────────────────────────────────────────
+
 version: '3.8'
 
 services:
-    cantinero-scraper:
+    # ── Generátor obrázků jídel (main.py + generator.py) ─────────────────────
+    generator:
+        # Build z místního Dockerfile
         build: .
-        container_name: cantinero-scraper
+        container_name: generator
+        # Načteme proměnné prostředí z .env souboru (GEMINI_API_KEY, CANTINERO_API_BASE_URL)
         env_file:
-          - /root/env/cantinero-scraper.env
+            - .env
+        # ── Volumes pro persistentní data ─────────────────────────────────
+        # Bez volumes by se data ztratila při restartu kontejneru!
+        # ./vygenerovano  = vygenerované PNG obrázky (na hostu i v kontejneru)
+        # ./data          = SQLite databáze images.db
+        volumes:
+            - ./vygenerovano:/app/vygenerovano
+            - ./data:/app/data
+        # Vždy restartuj pokud kontejner spadne (kromě ručního zastavení)
         restart: unless-stopped
+        # Nasloucháme na portu 8000 (přistupné z Traefiku nebo přímé)
+        # Pokud používáš Traefik proxy, odkomentuj labels níže a zakomentuj ports
+        # ports:
+        #     - "8000:8000"
         networks:
             - traefik_default
 
 networks:
+    # Sdílená síť s Traefik reverzním proxy
+    # Traefik musí být spuštěn samostatně a tuto síť musí vytvořit
     traefik_default:
         external: true
