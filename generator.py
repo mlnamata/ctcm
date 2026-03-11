@@ -257,7 +257,13 @@ def remove_background(image_bytes: bytes) -> Image.Image:
     #   blue_ratio > 0.45 = B tvoří aspoň 45% celé světlosti
     #   B > 60            = není to tma (tmavé barvy nezajímají)
     #   R < 160, G < 160  = R a G nejsou vysoké (= není to bílá, žlutá, cyan)
-    blue_mask = (blue_ratio > 0.45) & (B > 60) & (R < 160) & (G < 160)
+    blue_rgb = (blue_ratio > 0.45) & (B > 60) & (R < 160) & (G < 160)
+
+    # HSV detekce zachytí i světlejší modré kde G >= 160 (RGB je propustí)
+    blue_hsv = _is_blue_hsv(R, G, B)
+
+    # Pixel je modrý pokud ho zachytí KTERÁKOLIV metoda
+    blue_mask = blue_rgb | blue_hsv
 
     # ── Flood-fill od hranic ────────────────────────────────────────────────
     # Vytvoříme prázdnou masku hraničních pixelů
@@ -282,8 +288,18 @@ def remove_background(image_bytes: bytes) -> Image.Image:
     # final_bg = maska všeho pozadí (bez vnitřních modrých artefaktů)
     final_bg = np.isin(labeled, list(bg_labels))
 
-    # Rozšíř masku pozadí o 2 px -> zachytí subpixelové okraje talíře
-    dilated = binary_dilation(final_bg, disk(2))
+    # Velké modré skvrny nepřipojené k okraji jsou taky pozadí
+    # (stane se když okraj talíře přeruší spojení modré k hranici obrázku)
+    remaining_blue = blue_mask & ~final_bg
+    remaining_labeled, remaining_n = label(remaining_blue)
+    for i in range(1, remaining_n + 1):
+        region = remaining_labeled == i
+        if region.sum() > 100:
+            final_bg |= region
+
+    # Rozšíř masku pozadí o 3 px -> zachytí subpixelové okraje talíře
+    # (zvýšeno z 2 na 3 pro lepší čištění modrého okraje)
+    dilated = binary_dilation(final_bg, disk(3))
 
     # ── Alfa kanál ──────────────────────────────────────────────────────────
     # pozadí (dilated=True)  -> alpha=0   (průhledné)
@@ -314,6 +330,50 @@ def remove_background(image_bytes: bytes) -> Image.Image:
 MAX_CLEANUP_PASSES = 10
 
 
+def _is_blue_hsv(R: np.ndarray, G: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """
+    Detekuje modré pixely pomocí HSV barevného prostoru.
+    Doplňuje RGB detekci – zachytí i světlejší a méně syté modré
+    které RGB poměry propustí (např. světle modrá kde G >= 140).
+
+    HSV je přesnější pro identifikaci barvy:
+      H (hue/odstín) = jaká barva (240° = modrá)
+      S (saturation/sytost) = 0 = šedá, 1 = plná barva
+      V (value/jas) = 0 = černá, 255 = plný jas
+    """
+    # Spočítáme max a min kanál pro každý pixel
+    max_c = np.maximum(np.maximum(R, G), B)
+    min_c = np.minimum(np.minimum(R, G), B)
+    delta = max_c - min_c
+
+    # Sytost = poměr delta/max (0 u šedé, 1 u plné barvy)
+    # np.errstate potlačí RuntimeWarning při dělení kde max_c ≈ 0 (černé pixely)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sat = np.where(max_c > 1e-6, delta / max_c, 0.0)
+
+    # Odstín (hue) počítáme jen kde je delta > 1 (jinak je pixel šedý/bílý/černý)
+    hue = np.zeros_like(R)
+    valid = delta > 1.0
+
+    # Když je B největší kanál → modrý/fialový odstín (okolo 240°)
+    b_max = valid & (B >= R) & (B >= G)
+    hue[b_max] = 60.0 * ((R[b_max] - G[b_max]) / (delta[b_max] + 1e-6) + 4.0)
+
+    # Když je G největší → zelený odstín (120°)
+    g_max = valid & (G > B) & (G >= R)
+    hue[g_max] = 60.0 * ((B[g_max] - R[g_max]) / (delta[g_max] + 1e-6) + 2.0)
+
+    # Když je R největší → červený/žlutý odstín (0° nebo 360°)
+    r_max = valid & ~b_max & ~g_max
+    hue[r_max] = (60.0 * ((G[r_max] - B[r_max]) / (delta[r_max] + 1e-6))) % 360.0
+
+    # Pixel je modrý pokud:
+    #   - odstín 190°-270° (modrá + modrofialová)
+    #   - sytost > 0.15 (není šedá)
+    #   - jas > 50 (není příliš tmavý)
+    return (hue >= 190) & (hue <= 270) & (sat > 0.15) & (max_c > 50)
+
+
 def _detect_blue_in_plate(data: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Detekuje modré pixely v RGBA numpy poli.
@@ -341,9 +401,15 @@ def _detect_blue_in_plate(data: np.ndarray) -> tuple[np.ndarray, np.ndarray, int
     max_ch = np.maximum(np.maximum(R, G), B) + 1e-6
     blue_ratio = B / max_ch
 
-    # Kombinace všech podmínek (& = logické AND pro celé numpy pole)
-    blue_mask = (opaque & (blue_ratio > 0.50) & (B > 80) & (R < 140) & (G < 140)
-                 & (B > R + 30) & (B > G + 30))
+    # RGB detekce (přísná, zachytí jasně modré pixely)
+    blue_rgb = (opaque & (blue_ratio > 0.50) & (B > 80) & (R < 140) & (G < 140)
+                & (B > R + 30) & (B > G + 30))
+
+    # HSV detekce (zachytí i světlejší/méně syté modré)
+    blue_hsv = opaque & _is_blue_hsv(R, G, B)
+
+    # Pixel je modrý pokud ho zachytí KTERÁKOLIV metoda
+    blue_mask = blue_rgb | blue_hsv
     return blue_mask, opaque, int(blue_mask.sum())
 
 
@@ -443,9 +509,13 @@ def verify_final_composition(final_img: Image.Image) -> Image.Image:
     max_ch = np.maximum(np.maximum(R, G), B) + 1e-6
     blue_ratio = B / max_ch
 
-    # Stejné podmínky jako _detect_blue_in_plate – šedá neprojde
-    blue_mask = ((blue_ratio > 0.50) & (B > 80) & (R < 140) & (G < 140)
-                 & (B > R + 30) & (B > G + 30))
+    # RGB detekce (přísná)
+    blue_rgb = ((blue_ratio > 0.50) & (B > 80) & (R < 140) & (G < 140)
+                & (B > R + 30) & (B > G + 30))
+    # HSV detekce (zachytí i světlejší modré)
+    blue_hsv = _is_blue_hsv(R, G, B)
+    # Kombinace obou metod
+    blue_mask = blue_rgb | blue_hsv
     blue_count = int(blue_mask.sum())
 
     if blue_count == 0:
@@ -455,6 +525,7 @@ def verify_final_composition(final_img: Image.Image) -> Image.Image:
     print(f"   Verifikace finálního obrázku: {blue_count} modrých pixelů – čistím")
 
     # Nahradíme modré pixely průměrem okolních nemodrých pixelů (inpainting)
+    # Kernel 21px (zvýšeno z 15) pro lepší pokrytí větších modrých oblastí
     from scipy.ndimage import uniform_filter
     cleaned = data.copy()
     not_blue = ~blue_mask
@@ -464,33 +535,31 @@ def verify_final_composition(final_img: Image.Image) -> Image.Image:
         # Vynulujeme modré pixely, zprůměrujeme okolí
         channel[blue_mask] = 0
         weight = not_blue.astype(np.float32)
-        avg = uniform_filter(channel, size=15) 
-        avg_weight = uniform_filter(weight, size=15) + 1e-6
-        infill = uniform_filter(channel * weight, size=15) / avg_weight
+        avg_weight = uniform_filter(weight, size=21) + 1e-6
+        infill = uniform_filter(channel * weight, size=21) / avg_weight
         channel[blue_mask] = infill[blue_mask]
         cleaned[:, :, ch] = channel
 
     result = Image.fromarray(np.clip(cleaned, 0, 255).astype(np.uint8), "RGB")
 
-    # Ověříme výsledek (stejné podmínky jako výše)
+    # Ověříme výsledek – znovu HSV + RGB
     data2 = np.array(result, dtype=np.float32)
     R2, G2, B2 = data2[:, :, 0], data2[:, :, 1], data2[:, :, 2]
     max_ch2 = np.maximum(np.maximum(R2, G2), B2) + 1e-6
     br2 = B2 / max_ch2
-    remaining = int(((br2 > 0.50) & (B2 > 80) & (R2 < 140) & (G2 < 140) & (B2 > R2 + 30) & (B2 > G2 + 30)).sum())
+    still_rgb = ((br2 > 0.50) & (B2 > 80) & (R2 < 140) & (G2 < 140) & (B2 > R2 + 30) & (B2 > G2 + 30))
+    still_hsv = _is_blue_hsv(R2, G2, B2)
+    remaining = int((still_rgb | still_hsv).sum())
     print(f"   Po čištění finálního obrázku zbývá {remaining} modrých pixelů")
 
     if remaining > 0:
         # Poslední záchrana – tvrdě přebarví zbylé na šedou
-        data3 = np.array(result, dtype=np.float32)
-        R3, G3, B3 = data3[:, :, 0], data3[:, :, 1], data3[:, :, 2]
-        max_ch3 = np.maximum(np.maximum(R3, G3), B3) + 1e-6
-        still_blue = ((B3 / max_ch3 > 0.50) & (B3 > 80) & (R3 < 140) & (G3 < 140) & (B3 > R3 + 30) & (B3 > G3 + 30))
-        luma = (0.299 * R3 + 0.587 * G3 + 0.114 * B3).astype(np.uint8)
-        data3[still_blue, 0] = luma[still_blue]
-        data3[still_blue, 1] = luma[still_blue]
-        data3[still_blue, 2] = luma[still_blue]
-        result = Image.fromarray(np.clip(data3, 0, 255).astype(np.uint8), "RGB")
+        still_blue = still_rgb | still_hsv
+        luma = (0.299 * R2 + 0.587 * G2 + 0.114 * B2).astype(np.uint8)
+        data2[still_blue, 0] = luma[still_blue]
+        data2[still_blue, 1] = luma[still_blue]
+        data2[still_blue, 2] = luma[still_blue]
+        result = Image.fromarray(np.clip(data2, 0, 255).astype(np.uint8), "RGB")
         print("   Zbylé modré pixely desaturovány na šedou")
 
     return result
