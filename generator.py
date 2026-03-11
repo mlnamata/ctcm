@@ -111,9 +111,13 @@ SUFFIX = (
     "The plate is perfectly centered and isolated on a PERFECTLY UNIFORM, SOLID, FLAT chroma-key blue background "
     "(exact hex color #0000FF, no gradients, no vignetting, no shadows, no texture, fully saturated). "
     "The blue background must extend to all four corners and edges of the image without any variation. "
+    "The background must be ONE SINGLE FLAT COLOR LAYER only, with exactly the same blue value everywhere. "
+    "ABSOLUTELY NO shading, NO color falloff, NO light hotspots, NO reflections, NO banding, NO patches. "
+    "All background pixels should look identical as if produced by a digital fill tool. "
     "CRITICAL REQUIREMENTS: ONLY the white plate with food should be visible. "
     "The boundary between the white plate edge and the blue background must be a sharp, clean circle. "
     "DO NOT GENERATE A TRAY. NO table, NO cutlery, NO napkins, NO shadows on the background. "
+    "If any background imperfection appears, regenerate internally and return only a perfect flat blue background result. "
     "Flat, even studio lighting from directly above. High resolution."
 )
 
