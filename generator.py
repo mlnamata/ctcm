@@ -78,7 +78,7 @@ def sanitize_filename(name: str) -> str:
 
 def generate_description(food_name: str) -> str:
     """Pomocí Gemini vygeneruje anglický vizuální popis jídla (streaming)."""
-    print(f"  📝 Generuji textový popis pro: {food_name}")
+    print(f"   Generuji textový popis pro: {food_name}")
     print("  ", end="", flush=True)
     chunks = []
     for chunk in client.models.generate_content_stream(
@@ -93,14 +93,14 @@ def generate_description(food_name: str) -> str:
         chunks.append(text)
     print()  # nový řádek po dokončení
     description = "".join(chunks).strip()
-    print(f"  ✅ Popis vygenerován ({len(description)} znaků)")
+    print(f"  Popis vygenerován ({len(description)} znaků)")
     return description
 
 
 def generate_image(description: str) -> bytes:
     """Pomocí Gemini vygeneruje obrázek jídla na modrém pozadí."""
     prompt = PREFIX + description + SUFFIX
-    print("  🎨 Generuji obrázek (toto může chvíli trvat)...")
+    print("   Generuji obrázek (toto může chvíli trvat)...")
     response = client.models.generate_content(
         model=IMAGE_MODEL,
         contents=prompt,
@@ -112,7 +112,7 @@ def generate_image(description: str) -> bytes:
     # Extrakce obrázku z odpovědi
     for part in response.candidates[0].content.parts:
         if part.inline_data is not None:
-            print("  ✅ Obrázek vygenerován")
+            print("   Obrázek vygenerován")
             return part.inline_data.data
 
     raise RuntimeError("API nevrátilo žádný obrázek. Zkuste to znovu.")
@@ -120,7 +120,7 @@ def generate_image(description: str) -> bytes:
 
 def remove_background(image_bytes: bytes) -> Image.Image:
     """Odstraní modré chroma-key pozadí → vrátí RGBA obrázek s měkkými hranami."""
-    print("  ✂️  Odstraňuji modré pozadí (chroma-key + flood-fill)...")
+    print("    Odstraňuji modré pozadí (chroma-key + flood-fill)...")
     from PIL import ImageFilter
     from scipy.ndimage import binary_fill_holes
     from skimage.morphology import binary_dilation, disk
@@ -168,7 +168,7 @@ def remove_background(image_bytes: bytes) -> Image.Image:
 
     data_u8 = np.clip(data, 0, 255).astype(np.uint8)
     result = Image.fromarray(np.dstack([data_u8, alpha_final]), "RGBA")
-    print("  ✅ Pozadí odstraněno")
+    print("  Pozadí odstraněno")
     return result
 
 
@@ -187,7 +187,7 @@ def verify_and_cleanup_blue(plate_img: Image.Image, threshold_pct: float = 1.0) 
     opaque = alpha > 30
     total_opaque = opaque.sum()
     if total_opaque == 0:
-        print("  ⚠️  Obrázek nemá žádné neprůhledné pixely!")
+        print("   Obrázek nemá žádné neprůhledné pixely!")
         return plate_img
 
     # Detekce modrých residuí v neprůhledné oblasti
@@ -198,13 +198,13 @@ def verify_and_cleanup_blue(plate_img: Image.Image, threshold_pct: float = 1.0) 
     blue_pct = (blue_count / total_opaque) * 100
 
     if blue_count == 0:
-        print("  ✅ Verifikace: žádné modré artefakty nenalezeny")
+        print("   Verifikace: žádné modré artefakty nenalezeny")
         return plate_img
 
-    print(f"  ⚠️  Nalezeno {blue_count} modrých pixelů ({blue_pct:.1f}% viditelné plochy)")
+    print(f"   Nalezeno {blue_count} modrých pixelů ({blue_pct:.1f}% viditelné plochy)")
 
     if blue_pct > threshold_pct:
-        print("  🔧 Čistím modré artefakty...")
+        print("   Čistím modré artefakty...")
         # Desaturace modrých pixelů – nahradíme je průměrem okolí nebo šedou
         cleaned = data.copy()
 
@@ -236,10 +236,10 @@ def verify_and_cleanup_blue(plate_img: Image.Image, threshold_pct: float = 1.0) 
         max_ch2 = np.maximum(np.maximum(R2, G2), B2) + 1e-6
         blue_ratio2 = B2 / max_ch2
         remaining = (opaque2 & (blue_ratio2 > 0.50) & (B2 > 80) & (R2 < 140) & (G2 < 140)).sum()
-        print(f"  ✅ Po čištění zbývá {remaining} modrých pixelů")
+        print(f"   Po čištění zbývá {remaining} modrých pixelů")
         return result
     else:
-        print("  ℹ️  Množství modrých pixelů je pod prahem, ponechávám beze změny")
+        print("    Množství modrých pixelů je pod prahem, ponechávám beze změny")
         return plate_img
 
 
@@ -251,7 +251,7 @@ def compose_on_tray(plate_img: Image.Image) -> Image.Image:
             "Uložte fotografii prázdného tácu jako 'pozadi_tac.png' vedle tohoto skriptu."
         )
 
-    print("  🖼️  Skládám obrázek na pozadí tácu...")
+    print("   Skládám obrázek na pozadí tácu...")
     background = Image.open(BACKGROUND_PATH).convert("RGBA")
 
     # Výpočet vhodné velikosti talíře – 70 % kratší strany pozadí
@@ -273,7 +273,7 @@ def compose_on_tray(plate_img: Image.Image) -> Image.Image:
     composite = background.copy()
     composite.alpha_composite(plate_resized, dest=(x, y))
 
-    print("  ✅ Obrázek složen na tác")
+    print("  Obrázek složen na tác")
     return composite
 
 
@@ -284,7 +284,7 @@ def save_result(image: Image.Image, food_name: str) -> Path:
     filename = f"{safe_name}.png"
     output_path = OUTPUT_DIR / filename
     image.save(output_path, "PNG")
-    print(f"  💾 Uloženo: {output_path}")
+    print(f"   Uloženo: {output_path}")
     return output_path
 
 
@@ -318,46 +318,60 @@ def process_food(food_name: str) -> None:
         save_result(final_img, food_name)
 
     except FileNotFoundError as e:
-        print(f"  ❌ CHYBA: {e}")
+        print(f"   CHYBA: {e}")
     except RuntimeError as e:
-        print(f"  ❌ CHYBA při generování: {e}")
+        print(f"   CHYBA při generování: {e}")
     except Exception as e:
-        print(f"  ❌ Neočekávaná chyba: {type(e).__name__}: {e}")
+        print(f"  Neočekávaná chyba: {type(e).__name__}: {e}")
 
 
-def main():
-    """Hlavní smyčka – ptá se uživatele na názvy jídel."""
+def generate_full_pipeline(food_name: str) -> tuple[str, Image.Image]:
+    """Kompletní pipeline – vrátí (description, final_image)."""
+    food_name = food_name.strip()
+    if not food_name:
+        raise ValueError("Název jídla nesmí být prázdný.")
+
+    description = generate_description(food_name)
+    image_bytes = generate_image(description)
+    plate_img = remove_background(image_bytes)
+    plate_img = verify_and_cleanup_blue(plate_img)
+    final_img = compose_on_tray(plate_img)
+    return description, final_img
+
+
+def generate_image_from_description(description: str) -> Image.Image:
+    """Generuje obrázek z popisu – vrátí finální kompozit na tácu."""
+    image_bytes = generate_image(description)
+    plate_img = remove_background(image_bytes)
+    plate_img = verify_and_cleanup_blue(plate_img)
+    final_img = compose_on_tray(plate_img)
+    return final_img
+
+
+if __name__ == "__main__":
+    # CLI mód pro ruční testování
+    import sys as _sys
+
     print("=" * 60)
-    print("  🍽️  Generátor jídel české jídelny")
+    print("  Generátor jídel české jídelny")
     print("  Zadejte názvy jídel (oddělte středníkem ;)")
     print("  Pro ukončení napište 'konec'")
     print("=" * 60)
 
-    # Kontrola pozadí hned na začátku
-    if not BACKGROUND_PATH.exists():
-        print(f"\n⚠️  VAROVÁNÍ: Soubor '{BACKGROUND_PATH.name}' nebyl nalezen!")
-        print("  Uložte fotografii prázdného tácu jako 'pozadi_tac.png' vedle tohoto skriptu.\n")
-
     while True:
         try:
-            user_input = input("\n🍴 Zadejte jídlo (nebo 'konec'): ").strip()
+            user_input = input("\nZadejte jídlo (nebo 'konec'): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n\nUkončuji...")
             break
 
         if user_input.lower() == "konec":
-            print("\nNa shledanou! 👋")
+            print("\nNa shledanou!")
             break
 
         if not user_input:
             continue
 
-        # Rozdělení vstupu podle středníku → více jídel najednou
         foods = [f.strip() for f in user_input.split(";") if f.strip()]
-
         for food in foods:
             process_food(food)
-
-
-if __name__ == "__main__":
-    main()

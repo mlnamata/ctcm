@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+    cantinero-scraper:
+        build: .
+        container_name: cantinero-scraper
+        env_file:
+          - /root/env/cantinero-scraper.env
+        restart: unless-stopped
+        networks:
+            - traefik_default
+
+networks:
+    traefik_default:
+        external: true

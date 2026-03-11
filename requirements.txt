@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-dotenv
+requests
+google-genai
+numpy
+Pillow
+unidecode
+scipy
+scikit-image
