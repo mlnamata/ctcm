@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+scrapy
+mssql-python
+python-dotenv
+requests

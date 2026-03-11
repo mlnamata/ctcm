@@ -1,21 +1,17 @@
-import io
 import logging
 import os
-from collections import defaultdict
-from pathlib import Path
 
+import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from functions.strava import StravaAPI, FacilityNotFoundException
 from generator import (
     generate_description as gen_description,
     generate_image_from_description,
     sanitize_filename,
     OUTPUT_DIR,
 )
-from enum import IntEnum, StrEnum
 
 load_dotenv()
 
@@ -26,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-strava_client = StravaAPI()
+CANTINERO_API_BASE_URL = os.getenv("CANTINERO_API_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
 
 
 # ── Pydantic modely ──────────────────────────────────────────────────────────
@@ -37,20 +33,6 @@ class DescriptionRequest(BaseModel):
 class ImageRequest(BaseModel):
     name: str
     description: str
-
-
-# ── Enumy z cantinero-scraper ─────────────────────────────────────────────────
-class DayMenuImportProvider(IntEnum):
-    VIS_EXP_FILE = 0
-    VIS_STRAVA = 1
-    ZWARE_I_CANTEEN = 2
-    ALTISIMI_E_JIDELNICEK = 3
-
-
-class ExpectionResponseCode(StrEnum):
-    IMPORT_PROVIDER_NOT_CONFIGURED = "IMPORT_PROVIDER_NOT_CONFIGURED"
-    FACILITY_NOT_FOUND = "FACILITY_NOT_FOUND"
-    INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
 # ── Kontrola existence obrázku v DB ───────────────────────────────────────────
@@ -81,6 +63,38 @@ def save_image_record(food_name: str, filename: str, path: str) -> None:
     # db.execute("INSERT INTO generated_images (food_name, filename, path) VALUES (?, ?, ?)",
     #            food_name, filename, path)
     pass
+
+
+def call_cantinero_api(path: str) -> dict | list:
+    if not CANTINERO_API_BASE_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="CANTINERO_API_BASE_URL není nastavená",
+        )
+
+    url = f"{CANTINERO_API_BASE_URL}{path}"
+    try:
+        response = requests.get(url, timeout=25)
+    except requests.RequestException as e:
+        logger.error("FAIL volání cantinero-scraper API: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Volání cantinero-scraper API selhalo: {e}")
+
+    if response.status_code >= 400:
+        logger.error("cantinero-scraper API vrátilo %s: %s", response.status_code, response.text)
+        raise HTTPException(
+            status_code=response.status_code,
+            detail={
+                "source": "cantinero-scraper",
+                "status_code": response.status_code,
+                "body": response.text,
+            },
+        )
+
+    try:
+        return response.json()
+    except ValueError as e:
+        logger.error("Neplatná JSON odpověď z cantinero-scraper API: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail="cantinero-scraper API vrátilo neplatný JSON")
 
 
 # ── Nový endpoint: generace popisu jídla ──────────────────────────────────────
@@ -150,12 +164,14 @@ def generate_image_endpoint(body: ImageRequest):
     }
 
 
-# ── Endpointy z cantinero-scraper (zatím bez DB) ─────────────────────────────
+# ── Endpointy napojené na externí cantinero-scraper API ──────────────────────
 @app.get("/facility/{facility_id}/generate-import")
 def facility_import(facility_id: int):
-    raise HTTPException(status_code=501, detail="Databáze zatím není nastavena")
+    logger.info("Proxy volání generate-import pro facility_id=%s", facility_id)
+    return call_cantinero_api(f"/facility/{facility_id}/generate-import")
 
 
 @app.get("/facility/{facility_id}/preview-import")
 def preview_import(facility_id: int):
-    raise HTTPException(status_code=501, detail="Databáze zatím není nastavena")
+    logger.info("Proxy volání preview-import pro facility_id=%s", facility_id)
+    return call_cantinero_api(f"/facility/{facility_id}/preview-import")
